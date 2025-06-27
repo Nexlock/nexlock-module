@@ -8,13 +8,11 @@
 #define FIRMWARE_VERSION "1.0.0"
 #define DEVICE_NAME "NexLock"
 
-// Pin definitions for PN532
-#define PN532_SCK 18
-#define PN532_MOSI 23
-#define PN532_SS 5
-#define PN532_MISO 19
-#define PN532_IRQ 21
-#define PN532_RESET 22
+// Pin definitions for PN532 (I2C)
+#define PN532_SDA 21
+#define PN532_SCL 22
+#define PN532_IRQ 19  // Optional interrupt pin
+#define PN532_RESET 18  // Optional reset pin
 
 // Other pin definitions
 #define IR1 A0

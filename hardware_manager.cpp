@@ -4,8 +4,8 @@ HardwareManager::HardwareManager(Preferences* prefs)
   : preferences(prefs), lockers(nullptr), numLockers(0), isConfigured(false),
     waitingForValidation(false), nfcScanTime(0) {
   
-  pn532spi = new PN532_SPI(SPI, PN532_SS);
-  nfc = new PN532(*pn532spi);
+  pn532i2c = new PN532_I2C(Wire);
+  nfc = new PN532(*pn532i2c);
   nfcAdapter = new NfcAdapter(*nfc);
   lcd = new LiquidCrystal_I2C(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 }
@@ -13,12 +13,15 @@ HardwareManager::HardwareManager(Preferences* prefs)
 HardwareManager::~HardwareManager() {
   delete nfcAdapter;
   delete nfc;
-  delete pn532spi;
+  delete pn532i2c;
   delete lcd;
   if (lockers) delete[] lockers;
 }
 
 bool HardwareManager::initialize() {
+  // Initialize I2C
+  Wire.begin(PN532_SDA, PN532_SCL);
+  
   // Initialize LCD
   lcd->init();
   lcd->backlight();
@@ -26,18 +29,23 @@ bool HardwareManager::initialize() {
   // Initialize config button
   pinMode(CONFIG_BUTTON_PIN, INPUT_PULLUP);
   
+  // Optional: Initialize reset pin if used
+  if (PN532_RESET != -1) {
+    pinMode(PN532_RESET, OUTPUT);
+    digitalWrite(PN532_RESET, HIGH);
+  }
+  
   loadLockerConfiguration();
   
   if (isConfigured) {
-    // Initialize SPI and PN532
-    SPI.begin();
+    // Initialize PN532
     nfcAdapter->begin();
     
     // Check if PN532 is connected
     uint32_t versiondata = nfc->getFirmwareVersion();
     if (!versiondata) {
-      Serial.println("PN532 not found");
-      updateLCD("NFC Error", "Check wiring");
+      Serial.println("PN532 not found - check I2C wiring");
+      updateLCD("NFC Error", "Check I2C wiring");
       delay(2000);
     } else {
       Serial.print("Found PN532 with firmware version: ");
@@ -179,7 +187,7 @@ bool HardwareManager::readNFCText(String& nfcText) {
         }
       }
     } else {
-      // If no NDEF message, try to read as plain text or use UID
+      // If no NDEF message, try to read UID as fallback
       String uid = "";
       byte uidLength;
       byte uid_bytes[7];

@@ -1,19 +1,18 @@
 #ifndef HARDWARE_MANAGER_H
 #define HARDWARE_MANAGER_H
 
-#include <SPI.h>
-#include <PN532_SPI.h>
+#include <Wire.h>
+#include <PN532_I2C.h>
 #include <PN532.h>
 #include <NfcAdapter.h>
 #include <Servo.h>
-#include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <Preferences.h>
 #include "config.h"
 
 class HardwareManager {
 private:
-  PN532_SPI* pn532spi;
+  PN532_I2C* pn532i2c;
   PN532* nfc;
   NfcAdapter* nfcAdapter;
   LiquidCrystal_I2C* lcd;
