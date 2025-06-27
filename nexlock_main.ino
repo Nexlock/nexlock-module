@@ -80,8 +80,6 @@ void initializeManagers() {
     if (serverManager) {
       bool serverReady = serverManager->initialize(wifiManager->getServerIP(), wifiManager->getServerPort());
       Serial.println("Server initialization: " + String(serverReady ? "SUCCESS" : "FAILED"));
-    } else {
-      Serial.println("ERROR: Failed to create ServerManager");
     }
   }
 }
