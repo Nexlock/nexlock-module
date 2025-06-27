@@ -2,7 +2,9 @@
 #define HARDWARE_MANAGER_H
 
 #include <SPI.h>
-#include <MFRC522.h>
+#include <PN532_SPI.h>
+#include <PN532.h>
+#include <NfcAdapter.h>
 #include <Servo.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -11,7 +13,9 @@
 
 class HardwareManager {
 private:
-  MFRC522* rfid;
+  PN532_SPI* pn532spi;
+  PN532* nfc;
+  NfcAdapter* nfcAdapter;
   LiquidCrystal_I2C* lcd;
   Preferences* preferences;
   
@@ -31,6 +35,7 @@ private:
   void initializeServos();
   void initializeIRSensors();
   bool checkIRSensor(int pin, int threshold);
+  bool readNFCText(String& nfcText);
 
 public:
   HardwareManager(Preferences* prefs);
@@ -42,7 +47,7 @@ public:
   
   // NFC operations
   bool scanNFC(String& nfcCode);
-  void setNFCValidationResult(bool valid, const String& lockerId, const String& message);
+  void setNFCValidationResult(bool valid, const String& message);
   bool isWaitingForNFCValidation() const { return waitingForValidation; }
   void resetNFCValidation();
   

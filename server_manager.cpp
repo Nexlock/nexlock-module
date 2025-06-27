@@ -212,6 +212,6 @@ void ServerManager::handleNFCValidationResult(uint8_t* payload, size_t length) {
     hardware->toggleLocker(lockerId);
     hardware->setNFCValidationResult(true, "Locker " + lockerId);
   } else {
-    hardware->setNFCValidationResult(false, message);
+    hardware->setNFCValidationResult(false, message.length() > 0 ? message : "Invalid NFC");
   }
 }

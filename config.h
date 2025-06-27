@@ -8,14 +8,20 @@
 #define FIRMWARE_VERSION "1.0.0"
 #define DEVICE_NAME "NexLock"
 
-// Pin definitions
-#define SS_PIN1 10
-#define RST_PIN1 9
+// Pin definitions for PN532
+#define PN532_SCK 18
+#define PN532_MOSI 23
+#define PN532_SS 5
+#define PN532_MISO 19
+#define PN532_IRQ 21
+#define PN532_RESET 22
+
+// Other pin definitions
 #define IR1 A0
 #define IR2 A1
 #define IR3 A2
 #define SERVO_PIN1 4
-#define SERVO_PIN2 5
+#define SERVO_PIN2 13
 #define SERVO_PIN3 6
 #define CONFIG_BUTTON_PIN 2
 

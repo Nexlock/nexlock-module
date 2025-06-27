@@ -4,12 +4,16 @@ HardwareManager::HardwareManager(Preferences* prefs)
   : preferences(prefs), lockers(nullptr), numLockers(0), isConfigured(false),
     waitingForValidation(false), nfcScanTime(0) {
   
-  rfid = new MFRC522(SS_PIN1, RST_PIN1);
+  pn532spi = new PN532_SPI(SPI, PN532_SS);
+  nfc = new PN532(*pn532spi);
+  nfcAdapter = new NfcAdapter(*nfc);
   lcd = new LiquidCrystal_I2C(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 }
 
 HardwareManager::~HardwareManager() {
-  delete rfid;
+  delete nfcAdapter;
+  delete nfc;
+  delete pn532spi;
   delete lcd;
   if (lockers) delete[] lockers;
 }
@@ -25,9 +29,23 @@ bool HardwareManager::initialize() {
   loadLockerConfiguration();
   
   if (isConfigured) {
-    // Initialize SPI and RFID
+    // Initialize SPI and PN532
     SPI.begin();
-    rfid->PCD_Init();
+    nfcAdapter->begin();
+    
+    // Check if PN532 is connected
+    uint32_t versiondata = nfc->getFirmwareVersion();
+    if (!versiondata) {
+      Serial.println("PN532 not found");
+      updateLCD("NFC Error", "Check wiring");
+      delay(2000);
+    } else {
+      Serial.print("Found PN532 with firmware version: ");
+      Serial.println(versiondata, HEX);
+      
+      // Configure board to read RFID tags
+      nfc->SAMConfig();
+    }
     
     initializeServos();
     initializeIRSensors();
@@ -110,21 +128,13 @@ void HardwareManager::initializeIRSensors() {
 bool HardwareManager::scanNFC(String& nfcCode) {
   if (!isConfigured) return false;
   
-  if (rfid->PICC_IsNewCardPresent() && rfid->PICC_ReadCardSerial()) {
-    nfcCode = "";
-    for (byte i = 0; i < rfid->uid.size; i++) {
-      if (rfid->uid.uidByte[i] < 0x10) nfcCode += "0";
-      nfcCode += String(rfid->uid.uidByte[i], HEX);
-    }
-    nfcCode.toLowerCase();
-    
+  if (readNFCText(nfcCode)) {
     currentNFCCode = nfcCode;
     waitingForValidation = true;
     nfcScanTime = millis();
     
-    rfid->PICC_HaltA();
-    
     updateLCD("Validating...", "Please wait");
+    Serial.println("NFC text read: " + nfcCode);
     return true;
   }
   
@@ -134,6 +144,55 @@ bool HardwareManager::scanNFC(String& nfcCode) {
     updateLCD("NFC Timeout", "Try again");
     delay(2000);
     updateSystemStatus();
+  }
+  
+  return false;
+}
+
+bool HardwareManager::readNFCText(String& nfcText) {
+  if (nfcAdapter->tagPresent()) {
+    NfcTag tag = nfcAdapter->read();
+    
+    if (tag.hasNdefMessage()) {
+      NdefMessage message = tag.getNdefMessage();
+      
+      // Look for text records
+      for (int i = 0; i < message.getRecordCount(); i++) {
+        NdefRecord record = message.getRecord(i);
+        
+        if (record.getTnf() == TNF_WELL_KNOWN && record.getType() == "T") {
+          // Text record found
+          int payloadLength = record.getPayloadLength();
+          byte payload[payloadLength];
+          record.getPayload(payload);
+          
+          // First byte is status (language code length + encoding)
+          int languageCodeLength = payload[0] & 0x3F;
+          
+          // Extract text after language code
+          nfcText = "";
+          for (int j = 1 + languageCodeLength; j < payloadLength; j++) {
+            nfcText += (char)payload[j];
+          }
+          
+          return true;
+        }
+      }
+    } else {
+      // If no NDEF message, try to read as plain text or use UID
+      String uid = "";
+      byte uidLength;
+      byte uid_bytes[7];
+      
+      if (nfc->readPassiveTargetID(PN532_MIFARE_ISO14443A, uid_bytes, &uidLength)) {
+        for (uint8_t i = 0; i < uidLength; i++) {
+          if (uid_bytes[i] < 0x10) uid += "0";
+          uid += String(uid_bytes[i], HEX);
+        }
+        nfcText = uid;
+        return true;
+      }
+    }
   }
   
   return false;
