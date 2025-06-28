@@ -5,7 +5,7 @@ ServerManager *ServerManager::instance = nullptr;
 
 ServerManager::ServerManager(HardwareManager *hw, const String &mac)
     : hardware(hw), macAddress(mac), isConnected(false), isConfigured(false),
-      lastPing(0), lastReconnectAttempt(0)
+      lastPing(0), lastReconnectAttempt(0), lastAvailableBroadcast(0)
 {
   webSocket = new WebsocketsClient();
   instance = this;
@@ -111,45 +111,70 @@ void ServerManager::loop()
     sendPing();
     lastPing = currentTime;
   }
+
+  // Send available module broadcast if not configured
+  if (!isConfigured && currentTime - lastAvailableBroadcast >= AVAILABLE_BROADCAST_INTERVAL)
+  {
+    sendAvailableModuleBroadcast();
+    lastAvailableBroadcast = currentTime;
+  }
+}
+
+void ServerManager::sendAvailableModuleBroadcast()
+{
+  if (isConfigured || !isConnected)
+    return;
+
+  StaticJsonDocument<MEDIUM_JSON_SIZE> doc;
+  doc["type"] = "module_available";
+  doc["macAddress"] = macAddress;
+  doc["deviceInfo"] = String(DEVICE_NAME) + " v" + String(FIRMWARE_VERSION);
+  doc["version"] = FIRMWARE_VERSION;
+  doc["capabilities"] = MAX_LOCKERS;
+  doc["timestamp"] = millis();
+
+  String message;
+  message.reserve(300);
+  serializeJson(doc, message);
+
+  webSocket->send(message);
+  Serial.println(F("Sent available module broadcast"));
 }
 
 void ServerManager::handleMessage(const String &message)
 {
-  DynamicJsonDocument doc(2048);
+  StaticJsonDocument<LARGE_JSON_SIZE> doc;
   DeserializationError error = deserializeJson(doc, message);
 
   if (error)
   {
-    Serial.println("Failed to parse WebSocket message: " + String(error.c_str()));
+    Serial.print(F("Parse error: "));
+    Serial.println(error.c_str());
     return;
   }
 
-  String messageType = doc["type"].as<String>();
+  const char *messageType = doc["type"];
 
-  if (messageType == "connected")
+  if (strcmp(messageType, "connected") == 0)
   {
-    Serial.println("Server acknowledged connection");
+    Serial.println(F("Server acknowledged connection"));
   }
-  else if (messageType == "registered")
+  else if (strcmp(messageType, "registered") == 0)
   {
-    Serial.println("Module registered successfully");
-    hardware->updateLCD("Registered", "System Ready");
+    Serial.println(F("Module registered successfully"));
+    hardware->updateLCD(F("Registered"), F("System Ready"));
   }
-  else if (messageType == "pong")
+  else if (strcmp(messageType, "pong") == 0)
   {
     // Server responded to our ping
   }
-  else if (messageType == "lock" || messageType == "unlock")
+  else if (strcmp(messageType, "lock") == 0 || strcmp(messageType, "unlock") == 0)
   {
     handleLockUnlockCommand(doc);
   }
-  else if (messageType == "module_configured")
+  else if (strcmp(messageType, "module_configured") == 0)
   {
     handleModuleConfiguration(doc);
-  }
-  else
-  {
-    Serial.println("Unknown message type: " + messageType);
   }
 }
 
@@ -158,34 +183,37 @@ void ServerManager::registerModule()
   if (!isConfigured || !isConnected)
     return;
 
-  DynamicJsonDocument doc(256);
+  StaticJsonDocument<SMALL_JSON_SIZE> doc;
   doc["type"] = "register";
   doc["moduleId"] = moduleId;
 
   String message;
+  message.reserve(150);
   serializeJson(doc, message);
 
   webSocket->send(message);
-  Serial.println("Sent registration for module: " + moduleId);
+  Serial.print(F("Registered module: "));
+  Serial.println(moduleId);
 }
 
 void ServerManager::handleLockUnlockCommand(const JsonDocument &doc)
 {
   String lockerId = doc["lockerId"].as<String>();
-  String action = doc["type"].as<String>(); // "lock" or "unlock"
+  const char *action = doc["type"];
 
-  Serial.println("Received " + action + " command for locker: " + lockerId);
+  Serial.print(F("Command "));
+  Serial.print(action);
+  Serial.print(F(" for locker: "));
+  Serial.println(lockerId);
 
-  if (action == "unlock")
+  if (strcmp(action, "unlock") == 0)
   {
     hardware->unlockLocker(lockerId);
-    // Send status update after unlocking
     sendStatusUpdate(lockerId, "unlocked");
   }
-  else if (action == "lock")
+  else if (strcmp(action, "lock") == 0)
   {
     hardware->lockLocker(lockerId);
-    // Send status update after locking
     sendStatusUpdate(lockerId, "locked");
   }
 }
@@ -195,7 +223,7 @@ void ServerManager::sendStatusUpdate(const String &lockerId, const String &statu
   if (!isConfigured || !isConnected)
     return;
 
-  DynamicJsonDocument doc(512);
+  StaticJsonDocument<MEDIUM_JSON_SIZE> doc;
   doc["type"] = "status_update";
   doc["moduleId"] = moduleId;
   doc["lockerId"] = lockerId;
@@ -203,30 +231,10 @@ void ServerManager::sendStatusUpdate(const String &lockerId, const String &statu
   doc["timestamp"] = millis();
 
   String message;
+  message.reserve(200);
   serializeJson(doc, message);
 
   webSocket->send(message);
-  Serial.println("Sent status update - Locker " + lockerId + ": " + status);
-}
-
-void ServerManager::sendLockerStatus(const String &lockerId, bool isOccupied)
-{
-  if (!isConfigured || !isConnected)
-    return;
-
-  DynamicJsonDocument doc(512);
-  doc["type"] = "locker_status";
-  doc["moduleId"] = moduleId;
-  doc["lockerId"] = lockerId;
-  doc["occupied"] = isOccupied;
-  doc["timestamp"] = millis();
-
-  String message;
-  serializeJson(doc, message);
-
-  webSocket->send(message);
-  Serial.printf("Status sent: Locker %s - %s\n",
-                lockerId.c_str(), isOccupied ? "Occupied" : "Empty");
 }
 
 void ServerManager::sendPing()
@@ -234,11 +242,12 @@ void ServerManager::sendPing()
   if (!isConfigured || !isConnected)
     return;
 
-  DynamicJsonDocument doc(256);
+  StaticJsonDocument<SMALL_JSON_SIZE> doc;
   doc["type"] = "ping";
   doc["moduleId"] = moduleId;
 
   String message;
+  message.reserve(100);
   serializeJson(doc, message);
 
   webSocket->send(message);
@@ -249,9 +258,8 @@ void ServerManager::handleModuleConfiguration(const JsonDocument &doc)
   String configModuleId = doc["moduleId"];
   JsonArrayConst lockerArray = doc["lockerIds"];
 
-  // Convert JsonArray to String array
   String *lockerIds = new String[lockerArray.size()];
-  for (int i = 0; i < lockerArray.size(); i++)
+  for (size_t i = 0; i < lockerArray.size(); i++)
   {
     lockerIds[i] = lockerArray[i].as<String>();
   }
@@ -260,64 +268,10 @@ void ServerManager::handleModuleConfiguration(const JsonDocument &doc)
 
   delete[] lockerIds;
 
-  Serial.println("Module configured with ID: " + configModuleId);
-  hardware->updateLCD("Configured!", "Restarting...");
+  Serial.print(F("Module configured: "));
+  Serial.println(configModuleId);
+  hardware->updateLCD(F("Configured!"), F("Restarting..."));
 
   delay(2000);
   ESP.restart();
-}
-}
-
-void ServerManager::handleModuleConfiguration(const JsonDocument &doc)
-{
-  String configModuleId = doc["moduleId"];
-  JsonArrayConst lockerArray = doc["lockerIds"];
-
-  // Convert JsonArray to String array
-  String *lockerIds = new String[lockerArray.size()];
-  for (int i = 0; i < lockerArray.size(); i++)
-  {
-    lockerIds[i] = lockerArray[i].as<String>();
-  }
-
-  hardware->saveLockerConfiguration(configModuleId, lockerIds, lockerArray.size());
-
-  delete[] lockerIds;
-
-  Serial.println("Module configured with ID: " + configModuleId);
-  hardware->updateLCD("Configured!", "Restarting...");
-
-  delay(2000);
-  ESP.restart();
-}
-
-void ServerManager::handleUnlockEvent(const JsonDocument &doc)
-{
-  String lockerId = doc["lockerId"];
-  String action = doc["action"];
-
-  if (action == "unlock")
-  {
-    hardware->unlockLocker(lockerId);
-  }
-}
-
-void ServerManager::handleNFCValidationResult(const JsonDocument &doc)
-{
-  if (!hardware->isWaitingForNFCValidation())
-    return;
-
-  bool valid = doc["valid"];
-  String lockerId = doc["lockerId"];
-  String message = doc["message"];
-
-  if (valid)
-  {
-    hardware->toggleLocker(lockerId);
-    hardware->setNFCValidationResult(true, "Locker " + lockerId);
-  }
-  else
-  {
-    hardware->setNFCValidationResult(false, message.length() > 0 ? message : "Invalid NFC");
-  }
 }

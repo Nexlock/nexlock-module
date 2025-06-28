@@ -23,11 +23,13 @@ private:
 
   unsigned long lastPing;
   unsigned long lastReconnectAttempt;
+  unsigned long lastAvailableBroadcast;
 
   void handleMessage(const String &message);
   void handleModuleConfiguration(const JsonDocument &doc);
   void handleLockUnlockCommand(const JsonDocument &doc);
   bool reconnect();
+  void sendAvailableModuleBroadcast();
 
 public:
   ServerManager(HardwareManager *hw, const String &mac);
@@ -38,13 +40,12 @@ public:
 
   void registerModule();
   void sendStatusUpdate(const String &lockerId, const String &status);
-  void sendLockerStatus(const String &lockerId, bool isOccupied);
   void sendPing();
 
   bool getConnectionStatus() const { return isConnected; }
   bool getConfigurationStatus() const { return isConfigured; }
 
-  static ServerManager *instance; // For static callback
+  static ServerManager *instance;
 };
 
 #endif

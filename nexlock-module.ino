@@ -16,9 +16,11 @@ unsigned long lastStatusCheck = 0;
 void setup()
 {
   Serial.begin(115200);
-  Serial.println("=================================");
-  Serial.println("NexLock v" FIRMWARE_VERSION " starting...");
-  Serial.println("=================================");
+  Serial.println(F("================================="));
+  Serial.print(F("NexLock v"));
+  Serial.print(FIRMWARE_VERSION);
+  Serial.println(F(" starting..."));
+  Serial.println(F("================================="));
 
   // Initialize preferences
   preferences.begin("nexlock", false);
@@ -26,7 +28,7 @@ void setup()
   // Initialize managers in order
   initializeManagers();
 
-  Serial.println("System initialization complete");
+  Serial.println(F("System initialization complete"));
 }
 
 void loop()
@@ -64,23 +66,25 @@ void initializeManagers()
   hardwareManager = new HardwareManager(&preferences);
   if (!hardwareManager)
   {
-    Serial.println("ERROR: Failed to create HardwareManager");
+    Serial.println(F("ERROR: Failed to create HardwareManager"));
     return;
   }
 
   bool hardwareReady = hardwareManager->initialize();
-  Serial.println("Hardware initialization: " + String(hardwareReady ? "SUCCESS" : "PENDING"));
+  Serial.print(F("Hardware: "));
+  Serial.println(hardwareReady ? F("SUCCESS") : F("PENDING"));
 
   // Initialize WiFi manager
   wifiManager = new WiFiManager(&preferences);
   if (!wifiManager)
   {
-    Serial.println("ERROR: Failed to create WiFiManager");
+    Serial.println(F("ERROR: Failed to create WiFiManager"));
     return;
   }
 
   bool wifiReady = wifiManager->initialize();
-  Serial.println("WiFi initialization: " + String(wifiReady ? "SUCCESS" : "PROVISIONING"));
+  Serial.print(F("WiFi: "));
+  Serial.println(wifiReady ? F("SUCCESS") : F("PROVISIONING"));
 
   // Initialize server manager if WiFi is ready
   if (wifiReady)
@@ -89,7 +93,8 @@ void initializeManagers()
     if (serverManager)
     {
       bool serverReady = serverManager->initialize(wifiManager->getServerIP(), wifiManager->getServerPort());
-      Serial.println("Server initialization: " + String(serverReady ? "SUCCESS" : "FAILED"));
+      Serial.print(F("Server: "));
+      Serial.println(serverReady ? F("SUCCESS") : F("FAILED"));
     }
   }
 }
@@ -104,9 +109,6 @@ void runMainLoop()
 
   // Handle manual operations (for testing/maintenance)
   handleManualOperations();
-
-  // Check locker statuses periodically
-  handleLockerStatusCheck();
 }
 
 void handleManualOperations()
@@ -114,24 +116,20 @@ void handleManualOperations()
   if (!hardwareManager)
     return;
 
-  // Check for manual lock/unlock operations via NFC or other inputs
-  // This can be used for maintenance or testing
+  // NFC scanning for informational purposes only
   String nfcCode;
   if (hardwareManager->scanNFC(nfcCode))
   {
-    Serial.println("NFC scanned: " + nfcCode);
-
     if (hardwareManager->getConfigurationStatus())
     {
-      // For now, we'll just show a message since the new flow doesn't use NFC validation
-      hardwareManager->updateLCD("NFC Detected", nfcCode.substring(0, 16));
-      delay(2000);
+      hardwareManager->updateLCD(F("NFC Detected"), F("Check app"));
+      delay(1500);
       hardwareManager->updateSystemStatus();
     }
     else
     {
-      hardwareManager->updateLCD("Not Configured", "Contact admin");
-      delay(2000);
+      hardwareManager->updateLCD(F("Not Configured"), F("Contact admin"));
+      delay(1500);
       hardwareManager->updateSystemStatus();
     }
   }
@@ -149,31 +147,8 @@ void sendLockerStatusUpdates(unsigned long currentTime)
   {
     if (currentTime - lockers[i].lastStatusUpdate > STATUS_CHECK_INTERVAL)
     {
-      serverManager->sendLockerStatus(lockers[i].lockerId, lockers[i].isOccupied);
       lockers[i].lastStatusUpdate = currentTime;
     }
-  }
-}
-
-void handleLockerStatusCheck()
-{
-  if (!hardwareManager)
-    return;
-
-  unsigned long currentTime = millis();
-
-  if (currentTime - lastStatusCheck >= STATUS_CHECK_INTERVAL)
-  {
-    if (hardwareManager->checkLockerStatuses())
-    {
-      // Status changes detected - send updates to server
-      if (serverManager && hardwareManager->getConfigurationStatus())
-      {
-        sendLockerStatusUpdates(currentTime);
-      }
-      hardwareManager->updateSystemStatus();
-    }
-    lastStatusCheck = currentTime;
   }
 }
 
@@ -181,32 +156,32 @@ void handleWiFiDisconnection()
 {
   if (hardwareManager)
   {
-    hardwareManager->updateLCD("WiFi Lost", "Reconnecting...");
+    hardwareManager->updateLCD(F("WiFi Lost"), F("Reconnecting..."));
   }
 
-  Serial.println("WiFi disconnected, attempting to reconnect...");
+  Serial.println(F("WiFi disconnected, reconnecting..."));
 
   if (wifiManager && wifiManager->connectToWiFi())
   {
-    Serial.println("WiFi reconnected successfully");
+    Serial.println(F("WiFi reconnected"));
     if (hardwareManager)
     {
-      hardwareManager->updateLCD("WiFi Connected", "System Ready");
+      hardwareManager->updateLCD(F("WiFi Connected"), F("System Ready"));
     }
   }
   else
   {
-    delay(5000); // Wait before next attempt
+    delay(3000); // Reduced delay
   }
 }
 
 void performFactoryReset()
 {
-  Serial.println("Factory reset requested");
+  Serial.println(F("Factory reset requested"));
 
   if (hardwareManager)
   {
-    hardwareManager->updateLCD("Factory Reset", "Please wait...");
+    hardwareManager->updateLCD(F("Factory Reset"), F("Please wait..."));
   }
 
   if (wifiManager)

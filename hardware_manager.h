@@ -29,8 +29,6 @@ private:
   Servo servo1, servo2, servo3;
 
   void initializeServos();
-  void initializeIRSensors();
-  bool checkIRSensor(int pin, int threshold);
   bool readNFCCard(String &nfcCode);
 
 public:
@@ -51,10 +49,10 @@ public:
   void unlockLocker(const String &lockerId);
   void lockLocker(const String &lockerId);
   void toggleLocker(const String &lockerId);
-  bool checkLockerStatuses();
 
   // LCD operations
   void updateLCD(const String &line1, const String &line2);
+  void updateLCD(const __FlashStringHelper *line1, const __FlashStringHelper *line2);
   void updateSystemStatus();
 
   // Configuration button
