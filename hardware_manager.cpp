@@ -278,6 +278,25 @@ void HardwareManager::unlockLocker(const String &lockerId)
   }
 }
 
+void HardwareManager::lockLocker(const String &lockerId)
+{
+  for (int i = 0; i < numLockers; i++)
+  {
+    if (lockers[i].lockerId == lockerId)
+    {
+      lockers[i].servo->write(LOCK_POSITION);
+      lockers[i].currentPosition = LOCK_POSITION;
+
+      updateLCD("Locked", "Locker " + lockerId);
+      Serial.println("Locker " + lockerId + " locked");
+
+      delay(2000);
+      updateSystemStatus();
+      break;
+    }
+  }
+}
+
 void HardwareManager::toggleLocker(const String &lockerId)
 {
   for (int i = 0; i < numLockers; i++)

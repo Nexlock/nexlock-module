@@ -22,14 +22,11 @@ private:
   bool isConfigured;
 
   unsigned long lastPing;
-  unsigned long lastAvailableBroadcast;
   unsigned long lastReconnectAttempt;
 
   void handleMessage(const String &message);
   void handleModuleConfiguration(const JsonDocument &doc);
-  void handleUnlockEvent(const JsonDocument &doc);
-  void handleNFCValidationResult(const JsonDocument &doc);
-  void sendSocketIOMessage(const String &event, const String &data);
+  void handleLockUnlockCommand(const JsonDocument &doc);
   bool reconnect();
 
 public:
@@ -39,9 +36,8 @@ public:
   bool initialize(const String &serverIP, int serverPort);
   void loop();
 
-  void broadcastAvailable();
   void registerModule();
-  void validateNFC(const String &nfcCode);
+  void sendStatusUpdate(const String &lockerId, const String &status);
   void sendLockerStatus(const String &lockerId, bool isOccupied);
   void sendPing();
 

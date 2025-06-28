@@ -49,6 +49,7 @@ public:
 
   // Locker operations
   void unlockLocker(const String &lockerId);
+  void lockLocker(const String &lockerId);
   void toggleLocker(const String &lockerId);
   bool checkLockerStatuses();
 
