@@ -5,7 +5,6 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <esp_wifi.h>
-#include "WiFiProv.h"
 #include "config.h"
 
 class WiFiManager
@@ -19,19 +18,16 @@ private:
   String serverIP;
   int serverPort;
   bool isProvisioned;
-  bool useESPProvisioning;
 
   void setupProvisioningServer();
   void generateMacAddress();
-  void startESPProvisioning();
-  static void provisioningHandler(arduino_event_t *sys_event);
 
 public:
   WiFiManager(Preferences *prefs);
   ~WiFiManager();
 
   bool initialize();
-  void startProvisioningMode(bool preferESP = true);
+  void startProvisioningMode();
   bool connectToWiFi();
   void handleProvisioning();
   bool isConnected() const;

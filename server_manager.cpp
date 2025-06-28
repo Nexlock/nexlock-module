@@ -29,6 +29,9 @@ bool ServerManager::initialize(const String &serverIP, int serverPort)
   // Construct WebSocket URL for raw WebSocket connection (not Socket.IO)
   serverURL = "ws://" + serverIP + ":" + String(serverPort) + "/ws";
 
+  // Set proper headers to identify as ESP32 module
+  webSocket->addHeader("User-Agent", "ESP32-NexLock/1.0.0");
+
   // Set up WebSocket event handlers
   webSocket->onMessage([this](WebsocketsMessage message)
                        { handleMessage(message.data()); });

@@ -1,7 +1,7 @@
 #include "wifi_manager.h"
 #include <esp_wifi.h>
 
-WiFiManager::WiFiManager(Preferences *prefs) : preferences(prefs), isProvisioned(false), serverPort(DEFAULT_SERVER_PORT), useESPProvisioning(false)
+WiFiManager::WiFiManager(Preferences *prefs) : preferences(prefs), isProvisioned(false), serverPort(DEFAULT_SERVER_PORT)
 {
   provisioningServer = new WebServer(80);
   generateMacAddress();
@@ -49,45 +49,19 @@ void WiFiManager::loadConfiguration()
   isProvisioned = (ssid.length() > 0 && password.length() > 0 && serverIP.length() > 0);
 }
 
-void WiFiManager::startProvisioningMode(bool preferESP)
+void WiFiManager::startProvisioningMode()
 {
-  useESPProvisioning = preferESP;
+  // HTML provisioning only
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("NexLock_" + macAddress, "12345678");
 
-  if (useESPProvisioning)
-  {
-    startESPProvisioning();
-  }
-  else
-  {
-    // Fallback to HTML provisioning
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP("NexLock_" + macAddress, "12345678");
+  setupProvisioningServer();
+  provisioningServer->begin();
 
-    setupProvisioningServer();
-    provisioningServer->begin();
-
-    Serial.println("HTML Provisioning mode started");
-    Serial.println("AP: NexLock_" + macAddress);
-    Serial.println("IP: " + WiFi.softAPIP().toString());
-  }
-}
-
-void WiFiManager::startESPProvisioning()
-{
-  WiFi.mode(WIFI_AP_STA);
-
-  // Set device name for ESP provisioning
-  String deviceName = "NexLock_" + macAddress;
-
-  WiFiProv.beginProvision(NETWORK_PROV_SCHEME_BLE, NETWORK_PROV_SCHEME_HANDLER_FREE_BTDM,
-                          NETWORK_PROV_SECURITY_1, "nexlock123", deviceName.c_str());
-
-  // Note: ESP32 WiFiProv library doesn't have onProvisioningComplete callback
-  // We'll handle completion through WiFi events instead
-
-  Serial.println("ESP Provisioning started");
-  Serial.println("Device: " + deviceName);
-  Serial.println("Use NexLock mobile app to provision");
+  Serial.print(F("Provisioning AP: NexLock_"));
+  Serial.println(macAddress);
+  Serial.print(F("IP: "));
+  Serial.println(WiFi.softAPIP());
 }
 
 void WiFiManager::setupProvisioningServer()
@@ -139,13 +113,7 @@ bool WiFiManager::connectToWiFi()
 
 void WiFiManager::handleProvisioning()
 {
-  if (useESPProvisioning)
-  {
-    // ESP provisioning is handled automatically
-    return;
-  }
-
-  // Handle HTML provisioning
+  // Handle HTML provisioning only
   provisioningServer->handleClient();
 }
 
@@ -178,20 +146,4 @@ void WiFiManager::factoryReset()
 {
   preferences->clear();
   ESP.restart();
-}
-
-void WiFiManager::provisioningHandler(arduino_event_t *sys_event)
-{
-  switch (sys_event->event_id)
-  {
-  case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-    Serial.print("Connected with IP: ");
-    Serial.println(WiFi.localIP());
-    break;
-  case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-    Serial.println("Disconnected. Reconnecting...");
-    break;
-  default:
-    break;
-  }
 }
