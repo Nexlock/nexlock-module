@@ -2,7 +2,7 @@
 #define CONFIG_H
 
 #include <Arduino.h>
-#include <Servo.h>
+#include <ESP32Servo.h>
 
 // Version information
 #define FIRMWARE_VERSION "1.0.0"
@@ -11,13 +11,13 @@
 // Pin definitions for PN532 (I2C)
 #define PN532_SDA 21
 #define PN532_SCL 22
-#define PN532_IRQ 19  // Optional interrupt pin
-#define PN532_RESET 18  // Optional reset pin
+#define PN532_IRQ 19   // Optional interrupt pin
+#define PN532_RESET 18 // Optional reset pin
 
 // Other pin definitions
-#define IR1 A0
-#define IR2 A1
-#define IR3 A2
+#define IR1 36 // GPIO36 (VP, ADC1_CH0)
+#define IR2 39 // GPIO39 (VN, ADC1_CH3)
+#define IR3 34 // GPIO34 (ADC1_CH6)
 #define SERVO_PIN1 4
 #define SERVO_PIN2 13
 #define SERVO_PIN3 6
@@ -49,10 +49,11 @@
 #define LCD_ROWS 2
 
 // Locker configuration structure
-struct LockerConfig {
+struct LockerConfig
+{
   String lockerId;
   int servoPin;
-  Servo* servo;
+  Servo *servo;
   int irPin;
   int currentPosition;
   bool isOccupied;
