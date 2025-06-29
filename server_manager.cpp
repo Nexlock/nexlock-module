@@ -124,13 +124,20 @@ void ServerManager::loop()
     isConfigured = true;
     moduleId = hardware->getModuleId();
     registerModule();
-    return; // Exit early to avoid broadcasting
+    return;
   }
 
   if (isConfigured && currentTime - lastPing >= PING_INTERVAL)
   {
     sendPing();
     lastPing = currentTime;
+  }
+
+  // Send periodic status updates for all lockers
+  if (isConfigured && currentTime - lastStatusUpdate >= STATUS_CHECK_INTERVAL)
+  {
+    sendAllLockerStatusUpdates();
+    lastStatusUpdate = currentTime;
   }
 
   // Send available module broadcast ONLY if not configured
@@ -231,15 +238,44 @@ void ServerManager::handleLockUnlockCommand(const JsonDocument &doc)
   Serial.print(F(" for locker: "));
   Serial.println(lockerId);
 
+  bool success = false;
   if (strcmp(action, "unlock") == 0)
   {
-    hardware->unlockLocker(lockerId);
-    sendStatusUpdate(lockerId, "unlocked");
+    success = hardware->unlockLocker(lockerId);
+    if (success)
+    {
+      sendStatusUpdate(lockerId, "unlocked");
+    }
   }
   else if (strcmp(action, "lock") == 0)
   {
-    hardware->lockLocker(lockerId);
-    sendStatusUpdate(lockerId, "locked");
+    success = hardware->lockLocker(lockerId);
+    if (success)
+    {
+      sendStatusUpdate(lockerId, "locked");
+    }
+  }
+
+  if (!success)
+  {
+    Serial.print(F("Failed to execute command for locker: "));
+    Serial.println(lockerId);
+    sendStatusUpdate(lockerId, "error");
+  }
+}
+
+void ServerManager::sendAllLockerStatusUpdates()
+{
+  if (!isConfigured || !isConnected)
+    return;
+
+  LockerConfig *lockers = hardware->getLockers();
+  int numLockers = hardware->getNumLockers();
+
+  for (int i = 0; i < numLockers; i++)
+  {
+    String status = hardware->getLockerStatus(lockers[i].lockerId);
+    sendStatusUpdate(lockers[i].lockerId, status);
   }
 }
 

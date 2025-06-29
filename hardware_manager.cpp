@@ -2,94 +2,32 @@
 
 HardwareManager::HardwareManager(Preferences *prefs)
     : preferences(prefs), lockers(nullptr), numLockers(0), isConfigured(false),
-      waitingForValidation(false), nfcScanTime(0)
+      arduinoOnline(false), lastArduinoResponse(0), lastStatusRequest(0)
 {
-
-  nfc = new Adafruit_PN532(PN532_SDA, PN532_SCL);
-  lcd = new LiquidCrystal_I2C(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
+  arduinoSerial = &Serial2;
 }
 
 HardwareManager::~HardwareManager()
 {
-  delete nfc;
-  delete lcd;
   if (lockers)
     delete[] lockers;
 }
 
 bool HardwareManager::initialize()
 {
-  // Initialize I2C
-  Wire.begin(PN532_SDA, PN532_SCL);
-
-  // Initialize LCD - handle missing hardware gracefully
-  bool lcdInitialized = false;
-  try
-  {
-    lcd->init();
-    lcd->backlight();
-    lcdInitialized = true;
-    Serial.println("LCD initialized successfully");
-  }
-  catch (...)
-  {
-    Serial.println("Warning: LCD not found, continuing without display");
-  }
+  // Initialize serial communication with Arduino
+  arduinoSerial->begin(ARDUINO_BAUD_RATE, SERIAL_8N1, ARDUINO_RX_PIN, ARDUINO_TX_PIN);
 
   // Initialize config button
   pinMode(CONFIG_BUTTON_PIN, INPUT_PULLUP);
 
-  // Allow allocation of all timers for servo library
-  ESP32PWM::allocateTimer(0);
-  ESP32PWM::allocateTimer(1);
-  ESP32PWM::allocateTimer(2);
-  ESP32PWM::allocateTimer(3);
-
   loadLockerConfiguration();
 
-  if (isConfigured)
-  {
-    // Initialize PN532 - handle missing hardware gracefully
-    bool nfcInitialized = false;
-    nfc->begin();
+  // Notify Arduino that ESP32 is online
+  setOnlineStatus(true);
 
-    // Check if PN532 is connected
-    uint32_t versiondata = nfc->getFirmwareVersion();
-    if (!versiondata)
-    {
-      Serial.println("Warning: PN532 not found, NFC functionality disabled");
-      nfcInitialized = false;
-    }
-    else
-    {
-      Serial.print("Found PN532 with firmware version: 0x");
-      Serial.println(versiondata, HEX);
-      nfc->SAMConfig();
-      nfcInitialized = true;
-    }
-
-    initializeServos();
-
-    if (lcdInitialized)
-    {
-      updateLCD("System Ready", "Hardware OK");
-    }
-    else
-    {
-      Serial.println("System Ready - LCD not available");
-    }
-    return true;
-  }
-
-  if (lcdInitialized)
-  {
-    updateLCD("WiFi Connected", "Awaiting config");
-  }
-  else
-  {
-    Serial.println("WiFi Connected - Awaiting config");
-  }
-  return false;
+  Serial.println("Hardware Manager initialized");
+  return isConfigured;
 }
 
 void HardwareManager::loadLockerConfiguration()
@@ -98,29 +36,12 @@ void HardwareManager::loadLockerConfiguration()
   String ssid = preferences->getString("ssid", "");
   String serverIP = preferences->getString("serverIP", "");
 
-  // Device is configured only if it has WiFi credentials AND module ID
   isConfigured = (moduleId.length() > 0 && ssid.length() > 0 && serverIP.length() > 0);
-
-  Serial.print(F("Configuration check: moduleId="));
-  Serial.print(moduleId);
-  Serial.print(F(" (length: "));
-  Serial.print(moduleId.length());
-  Serial.print(F("), ssid="));
-  Serial.print(ssid);
-  Serial.print(F(", serverIP="));
-  Serial.print(serverIP);
-  Serial.print(F(", isConfigured="));
-  Serial.println(isConfigured);
 
   if (isConfigured)
   {
     this->moduleId = moduleId;
     numLockers = preferences->getInt("numLockers", 0);
-
-    Serial.print(F("Module configured with ID: "));
-    Serial.println(moduleId);
-    Serial.print(F("Number of lockers: "));
-    Serial.println(numLockers);
 
     if (numLockers > 0 && numLockers <= MAX_LOCKERS)
     {
@@ -130,327 +51,213 @@ void HardwareManager::loadLockerConfiguration()
       {
         String key = "locker" + String(i);
         lockers[i].lockerId = preferences->getString(key.c_str(), "");
-
-        // Assign hardware based on index
-        switch (i)
-        {
-        case 0:
-          lockers[i].servoPin = SERVO_PIN1;
-          lockers[i].servo = &servo1;
-          break;
-        case 1:
-          lockers[i].servoPin = SERVO_PIN2;
-          lockers[i].servo = &servo2;
-          break;
-        case 2:
-          lockers[i].servoPin = SERVO_PIN3;
-          lockers[i].servo = &servo3;
-          break;
-        }
-
-        lockers[i].currentPosition = LOCK_POSITION;
+        lockers[i].lockerIndex = i + 1;      // Arduino uses 1-based indexing
+        lockers[i].currentStatus = "locked"; // Default status
         lockers[i].lastStatusUpdate = 0;
 
-        Serial.print(F("Configured locker: "));
+        Serial.print("Configured locker: ");
         Serial.println(lockers[i].lockerId);
       }
     }
-  }
-  else
-  {
-    Serial.println(F("Module not configured yet - missing one or more required values"));
   }
 }
 
 void HardwareManager::saveLockerConfiguration(const String &moduleId, const String *lockerIds, int count)
 {
-  Serial.print(F("Saving module configuration: moduleId="));
-  Serial.print(moduleId);
-  Serial.print(F(", numLockers="));
-  Serial.println(count);
-
-  // Verify we have valid data before saving
-  if (moduleId.length() == 0)
+  if (moduleId.length() == 0 || count <= 0 || count > MAX_LOCKERS)
   {
-    Serial.println(F("ERROR: Cannot save empty moduleId"));
-    return;
-  }
-
-  if (count <= 0 || count > MAX_LOCKERS)
-  {
-    Serial.print(F("ERROR: Invalid locker count: "));
-    Serial.println(count);
+    Serial.println("ERROR: Invalid configuration parameters");
     return;
   }
 
   preferences->putString("moduleId", moduleId);
   preferences->putInt("numLockers", count);
 
-  for (int i = 0; i < count && i < MAX_LOCKERS; i++)
+  for (int i = 0; i < count; i++)
   {
     String key = "locker" + String(i);
     preferences->putString(key.c_str(), lockerIds[i]);
-    Serial.print(F("Saved locker: "));
-    Serial.print(key);
-    Serial.print(F(" = "));
-    Serial.println(lockerIds[i]);
   }
 
-  // Verify the save by reading back
-  String savedModuleId = preferences->getString("moduleId", "");
-  int savedNumLockers = preferences->getInt("numLockers", 0);
+  // Update local configuration
+  this->moduleId = moduleId;
+  this->isConfigured = true;
 
-  Serial.print(F("Verification - saved moduleId: "));
-  Serial.println(savedModuleId);
-  Serial.print(F("Verification - saved numLockers: "));
-  Serial.println(savedNumLockers);
-
-  if (savedModuleId == moduleId && savedNumLockers == count)
-  {
-    // Update local configuration status
-    this->moduleId = moduleId;
-    this->isConfigured = true;
-    Serial.println(F("Configuration saved and verified successfully"));
-  }
-  else
-  {
-    Serial.println(F("ERROR: Configuration verification failed"));
-  }
+  Serial.println("Configuration saved successfully");
 }
 
-void HardwareManager::initializeServos()
-{
-  for (int i = 0; i < numLockers; i++)
-  {
-    lockers[i].servo->attach(lockers[i].servoPin);
-    lockers[i].servo->write(LOCK_POSITION);
-    lockers[i].currentPosition = LOCK_POSITION;
-  }
-}
-
-bool HardwareManager::scanNFC(String &nfcCode)
-{
-  if (!isConfigured)
-    return false;
-
-  // Check if NFC hardware is available
-  static bool nfcAvailable = true;
-  if (!nfcAvailable)
-  {
-    return false;
-  }
-
-  try
-  {
-    if (readNFCCard(nfcCode))
-    {
-      Serial.print(F("NFC: "));
-      Serial.println(nfcCode);
-      updateLCD(F("NFC Detected"), nfcCode.substring(0, 12));
-      delay(1500);
-      updateSystemStatus();
-      return true;
-    }
-  }
-  catch (...)
-  {
-    Serial.println("NFC communication failed, disabling NFC");
-    nfcAvailable = false;
-  }
-
-  return false;
-}
-
-bool HardwareManager::readNFCCard(String &nfcCode)
-{
-  uint8_t success;
-  uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};
-  uint8_t uidLength;
-
-  // Wait for an ISO14443A type cards (Mifare, etc.)
-  success = nfc->readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 100);
-
-  if (success)
-  {
-    // Build hex string from UID
-    nfcCode = "";
-    for (uint8_t i = 0; i < uidLength; i++)
-    {
-      if (uid[i] < 0x10)
-        nfcCode += "0";
-      nfcCode += String(uid[i], HEX);
-    }
-    nfcCode.toUpperCase();
-    return true;
-  }
-
-  return false;
-}
-
-void HardwareManager::setNFCValidationResult(bool valid, const String &message)
-{
-  // This method is no longer used in the new server-driven flow
-  // Keep for backward compatibility
-  if (valid)
-  {
-    updateLCD("Access Granted", message);
-  }
-  else
-  {
-    updateLCD("Access Denied", message);
-  }
-
-  delay(2000);
-  updateSystemStatus();
-}
-
-void HardwareManager::resetNFCValidation()
-{
-  waitingForValidation = false;
-  currentNFCCode = "";
-}
-
-void HardwareManager::unlockLocker(const String &lockerId)
+bool HardwareManager::unlockLocker(const String &lockerId)
 {
   for (int i = 0; i < numLockers; i++)
   {
     if (lockers[i].lockerId == lockerId)
     {
-      lockers[i].servo->write(OPEN_POSITION);
-      lockers[i].currentPosition = OPEN_POSITION;
-
-      updateLCD(F("Unlocked"), "L" + lockerId);
-      Serial.print(F("Unlocked: "));
-      Serial.println(lockerId);
-
-      delay(1500);
-      updateSystemStatus();
-      break;
-    }
-  }
-}
-
-void HardwareManager::lockLocker(const String &lockerId)
-{
-  for (int i = 0; i < numLockers; i++)
-  {
-    if (lockers[i].lockerId == lockerId)
-    {
-      lockers[i].servo->write(LOCK_POSITION);
-      lockers[i].currentPosition = LOCK_POSITION;
-
-      updateLCD(F("Locked"), "L" + lockerId);
-      Serial.print(F("Locked: "));
-      Serial.println(lockerId);
-
-      delay(1500);
-      updateSystemStatus();
-      break;
-    }
-  }
-}
-
-void HardwareManager::toggleLocker(const String &lockerId)
-{
-  for (int i = 0; i < numLockers; i++)
-  {
-    if (lockers[i].lockerId == lockerId)
-    {
-      if (lockers[i].currentPosition == LOCK_POSITION)
+      sendCommandToArduino(CMD_UNLOCK, lockers[i].lockerIndex);
+      if (waitForArduinoResponse(RESP_ACK))
       {
-        lockers[i].servo->write(OPEN_POSITION);
-        lockers[i].currentPosition = OPEN_POSITION;
-        updateLCD("Opened", "Locker " + lockerId);
+        lockers[i].currentStatus = "unlocked";
+        lockers[i].lastStatusUpdate = millis();
+        Serial.print("Unlocked locker: ");
+        Serial.println(lockerId);
+        return true;
       }
       else
       {
-        lockers[i].servo->write(LOCK_POSITION);
-        lockers[i].currentPosition = LOCK_POSITION;
-        updateLCD("Locked", "Locker " + lockerId);
+        Serial.print("Failed to unlock locker: ");
+        Serial.println(lockerId);
+        return false;
       }
+    }
+  }
+  return false;
+}
 
-      Serial.println("Locker " + lockerId + " toggled");
+bool HardwareManager::lockLocker(const String &lockerId)
+{
+  for (int i = 0; i < numLockers; i++)
+  {
+    if (lockers[i].lockerId == lockerId)
+    {
+      sendCommandToArduino(CMD_LOCK, lockers[i].lockerIndex);
+      if (waitForArduinoResponse(RESP_ACK))
+      {
+        lockers[i].currentStatus = "locked";
+        lockers[i].lastStatusUpdate = millis();
+        Serial.print("Locked locker: ");
+        Serial.println(lockerId);
+        return true;
+      }
+      else
+      {
+        Serial.print("Failed to lock locker: ");
+        Serial.println(lockerId);
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
+void HardwareManager::requestStatusUpdate()
+{
+  unsigned long currentTime = millis();
+  if (currentTime - lastStatusRequest < STATUS_CHECK_INTERVAL)
+    return;
+
+  lastStatusRequest = currentTime;
+  sendCommandToArduino(CMD_STATUS, 0); // Request status for all lockers
+}
+
+void HardwareManager::loop()
+{
+  // Process incoming serial data from Arduino
+  while (arduinoSerial->available())
+  {
+    char command = arduinoSerial->read();
+    delay(10); // Small delay to ensure next byte is available
+
+    if (arduinoSerial->available())
+    {
+      uint8_t lockerIndex = arduinoSerial->read() - '0'; // Convert char to number
+      delay(10);
+
+      if (arduinoSerial->available())
+      {
+        char response = arduinoSerial->read();
+        processArduinoMessage(command, lockerIndex, response);
+        lastArduinoResponse = millis();
+        arduinoOnline = true;
+      }
+    }
+  }
+
+  // Check Arduino connection
+  if (millis() - lastArduinoResponse > 10000) // 10 seconds timeout
+  {
+    if (arduinoOnline)
+    {
+      Serial.println("Arduino connection lost");
+      arduinoOnline = false;
+    }
+  }
+
+  // Request periodic status updates
+  requestStatusUpdate();
+}
+
+void HardwareManager::sendCommandToArduino(char command, uint8_t lockerIndex)
+{
+  arduinoSerial->write(command);
+  arduinoSerial->write('0' + lockerIndex); // Convert number to char
+  arduinoSerial->flush();
+
+  Serial.print("Sent to Arduino: ");
+  Serial.print(command);
+  Serial.println(lockerIndex);
+}
+
+bool HardwareManager::waitForArduinoResponse(char expectedResponse, unsigned long timeout)
+{
+  unsigned long startTime = millis();
+
+  while (millis() - startTime < timeout)
+  {
+    if (arduinoSerial->available() >= 3) // Command + Index + Response
+    {
+      char cmd = arduinoSerial->read();
+      uint8_t idx = arduinoSerial->read() - '0';
+      char resp = arduinoSerial->read();
+
+      if (resp == expectedResponse)
+      {
+        processArduinoMessage(cmd, idx, resp);
+        return true;
+      }
+    }
+    delay(10);
+  }
+
+  return false;
+}
+
+void HardwareManager::processArduinoMessage(char command, uint8_t lockerIndex, char response)
+{
+  Serial.print("Arduino response: ");
+  Serial.print(command);
+  Serial.print(lockerIndex);
+  Serial.println(response);
+
+  // Update locker status based on response (simplified for servo status only)
+  for (int i = 0; i < numLockers; i++)
+  {
+    if (lockers[i].lockerIndex == lockerIndex)
+    {
+      switch (response)
+      {
+      case RESP_LOCKED:
+        lockers[i].currentStatus = "locked";
+        break;
+      case RESP_UNLOCKED:
+        lockers[i].currentStatus = "unlocked";
+        break;
+      case RESP_ACK:
+        // Acknowledgment received, status will be updated by subsequent status response
+        break;
+      case RESP_ERROR:
+        Serial.print("Error reported for locker: ");
+        Serial.println(lockerIndex);
+        break;
+      }
+      lockers[i].lastStatusUpdate = millis();
       break;
     }
   }
 }
 
-void HardwareManager::updateLCD(const String &line1, const String &line2)
+void HardwareManager::setOnlineStatus(bool online)
 {
-  // Only update LCD if it was successfully initialized
-  static bool lcdAvailable = true;
-
-  if (!lcdAvailable)
-  {
-    Serial.println("LCD: " + line1 + " | " + line2);
-    return;
-  }
-
-  try
-  {
-    lcd->clear();
-    lcd->setCursor(0, 0);
-    lcd->print(line1.substring(0, LCD_COLS));
-    lcd->setCursor(0, 1);
-    lcd->print(line2.substring(0, LCD_COLS));
-  }
-  catch (...)
-  {
-    Serial.println("LCD communication failed, disabling LCD");
-    lcdAvailable = false;
-    Serial.println("LCD: " + line1 + " | " + line2);
-  }
-}
-
-void HardwareManager::updateLCD(const __FlashStringHelper *line1, const __FlashStringHelper *line2)
-{
-  // Only update LCD if it was successfully initialized
-  static bool lcdAvailable = true;
-
-  if (!lcdAvailable)
-  {
-    Serial.print("LCD: ");
-    Serial.print(line1);
-    Serial.print(" | ");
-    Serial.println(line2);
-    return;
-  }
-
-  try
-  {
-    lcd->clear();
-    lcd->setCursor(0, 0);
-    lcd->print(line1);
-    lcd->setCursor(0, 1);
-    lcd->print(line2);
-  }
-  catch (...)
-  {
-    Serial.println("LCD communication failed, disabling LCD");
-    lcdAvailable = false;
-    Serial.print("LCD: ");
-    Serial.print(line1);
-    Serial.print(" | ");
-    Serial.println(line2);
-  }
-}
-
-void HardwareManager::updateSystemStatus()
-{
-  if (!isConfigured)
-  {
-    updateLCD(F("WiFi Connected"), F("Awaiting config"));
-    return;
-  }
-
-  int openCount = 0;
-  for (int i = 0; i < numLockers; i++)
-  {
-    if (lockers[i].currentPosition == OPEN_POSITION)
-      openCount++;
-  }
-
-  updateLCD("Open:" + String(openCount), F("Ready"));
+  char command = online ? CMD_ONLINE : CMD_OFFLINE;
+  sendCommandToArduino(command, 0);
 }
 
 bool HardwareManager::checkConfigButton()
@@ -468,7 +275,7 @@ bool HardwareManager::checkConfigButton()
     else if (millis() - pressStart > CONFIG_BUTTON_HOLD_TIME)
     {
       buttonPressed = false;
-      return true; // Factory reset requested
+      return true;
     }
   }
   else
@@ -482,4 +289,16 @@ bool HardwareManager::checkConfigButton()
 String HardwareManager::getModuleId() const
 {
   return moduleId;
+}
+
+String HardwareManager::getLockerStatus(const String &lockerId) const
+{
+  for (int i = 0; i < numLockers; i++)
+  {
+    if (lockers[i].lockerId == lockerId)
+    {
+      return lockers[i].currentStatus;
+    }
+  }
+  return "unknown";
 }

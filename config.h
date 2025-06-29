@@ -2,44 +2,30 @@
 #define CONFIG_H
 
 #include <Arduino.h>
-#include <ESP32Servo.h>
 
 // Version information
-#define FIRMWARE_VERSION "1.1.4"
+#define FIRMWARE_VERSION "1.2.0"
 #define DEVICE_NAME "NexLock"
 
-// Pin definitions for PN532 (I2C)
-#define PN532_SDA 21
-#define PN532_SCL 22
-#define PN532_IRQ 19   // Optional interrupt pin
-#define PN532_RESET 18 // Optional reset pin
+// Serial communication with Arduino
+#define ARDUINO_RX_PIN 16
+#define ARDUINO_TX_PIN 17
+#define ARDUINO_BAUD_RATE 115200
 
 // Other pin definitions
-#define SERVO_PIN1 4
-#define SERVO_PIN2 13
-#define SERVO_PIN3 6
 #define CONFIG_BUTTON_PIN 2
 
-// Servo positions
-#define LOCK_POSITION 0
-#define OPEN_POSITION 90
-
-// Timing constants (reduced intervals to save memory)
+// Timing constants
 #define PING_INTERVAL 60000
 #define STATUS_CHECK_INTERVAL 2000
 #define AVAILABLE_BROADCAST_INTERVAL 15000
-#define NFC_TIMEOUT 3000
 #define CONFIG_BUTTON_HOLD_TIME 5000
+#define SERIAL_TIMEOUT 1000
 
 // Network constants
 #define DEFAULT_SERVER_PORT 3000
 #define WIFI_CONNECTION_TIMEOUT 20
 #define MAX_LOCKERS 3
-
-// LCD constants
-#define LCD_ADDRESS 0x27
-#define LCD_COLS 16
-#define LCD_ROWS 2
 
 // Memory optimization - smaller JSON buffers
 #define SMALL_JSON_SIZE 256
@@ -53,13 +39,25 @@ const char HTML_FORM[] PROGMEM = "<h2>WiFi Setup</h2><form action='/configure' m
 
 const char HTML_FOOTER[] PROGMEM = "</div></body></html>";
 
+// Serial command protocol
+#define CMD_LOCK 'L'
+#define CMD_UNLOCK 'U'
+#define CMD_STATUS 'S'
+#define CMD_ONLINE 'O'
+#define CMD_OFFLINE 'F'
+
+// Response codes from Arduino (simplified - only servo status)
+#define RESP_LOCKED '1'
+#define RESP_UNLOCKED '2'
+#define RESP_ACK 'A'
+#define RESP_ERROR 'E'
+
 // Locker configuration structure
 struct LockerConfig
 {
   String lockerId;
-  uint8_t servoPin;
-  Servo *servo;
-  uint8_t currentPosition;
+  uint8_t lockerIndex;  // 1, 2, or 3 for Arduino
+  String currentStatus; // "locked" or "unlocked"
   unsigned long lastStatusUpdate;
 };
 

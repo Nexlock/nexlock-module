@@ -101,73 +101,41 @@ void initializeManagers()
 
 void runMainLoop()
 {
+  // Handle Arduino serial communication
+  if (hardwareManager)
+  {
+    hardwareManager->loop();
+
+    // Update Arduino with online status
+    if (wifiManager && wifiManager->isConnected())
+    {
+      hardwareManager->setOnlineStatus(true);
+    }
+    else
+    {
+      hardwareManager->setOnlineStatus(false);
+    }
+  }
+
   // Handle server communication
   if (serverManager)
   {
     serverManager->loop();
   }
-
-  // Handle manual operations (for testing/maintenance)
-  handleManualOperations();
-}
-
-void handleManualOperations()
-{
-  if (!hardwareManager)
-    return;
-
-  // NFC scanning for informational purposes only
-  String nfcCode;
-  if (hardwareManager->scanNFC(nfcCode))
-  {
-    if (hardwareManager->getConfigurationStatus())
-    {
-      hardwareManager->updateLCD(F("NFC Detected"), F("Check app"));
-      delay(1500);
-      hardwareManager->updateSystemStatus();
-    }
-    else
-    {
-      hardwareManager->updateLCD(F("Not Configured"), F("Contact admin"));
-      delay(1500);
-      hardwareManager->updateSystemStatus();
-    }
-  }
-}
-
-void sendLockerStatusUpdates(unsigned long currentTime)
-{
-  if (!hardwareManager || !serverManager || !hardwareManager->getConfigurationStatus())
-    return;
-
-  LockerConfig *lockers = hardwareManager->getLockers();
-  int numLockers = hardwareManager->getNumLockers();
-
-  for (int i = 0; i < numLockers; i++)
-  {
-    if (currentTime - lockers[i].lastStatusUpdate > STATUS_CHECK_INTERVAL)
-    {
-      lockers[i].lastStatusUpdate = currentTime;
-    }
-  }
 }
 
 void handleWiFiDisconnection()
 {
+  Serial.println(F("WiFi disconnected, reconnecting..."));
+
   if (hardwareManager)
   {
-    hardwareManager->updateLCD(F("WiFi Lost"), F("Reconnecting..."));
+    hardwareManager->setOnlineStatus(false);
   }
-
-  Serial.println(F("WiFi disconnected, reconnecting..."));
 
   if (wifiManager && wifiManager->connectToWiFi())
   {
     Serial.println(F("WiFi reconnected"));
-    if (hardwareManager)
-    {
-      hardwareManager->updateLCD(F("WiFi Connected"), F("System Ready"));
-    }
   }
   else
   {
@@ -181,7 +149,7 @@ void performFactoryReset()
 
   if (hardwareManager)
   {
-    hardwareManager->updateLCD(F("Factory Reset"), F("Please wait..."));
+    hardwareManager->setOnlineStatus(false);
   }
 
   if (wifiManager)

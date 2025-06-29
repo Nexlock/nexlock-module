@@ -1,18 +1,14 @@
 #ifndef HARDWARE_MANAGER_H
 #define HARDWARE_MANAGER_H
 
-#include <Wire.h>
-#include <Adafruit_PN532.h>
-#include <ESP32Servo.h>
-#include <LiquidCrystal_I2C.h>
+#include <HardwareSerial.h>
 #include <Preferences.h>
 #include "config.h"
 
 class HardwareManager
 {
 private:
-  Adafruit_PN532 *nfc;
-  LiquidCrystal_I2C *lcd;
+  HardwareSerial *arduinoSerial;
   Preferences *preferences;
 
   LockerConfig *lockers;
@@ -20,20 +16,15 @@ private:
   bool isConfigured;
   String moduleId;
 
-  // Hardware availability flags
-  bool nfcAvailable;
-  bool lcdAvailable;
+  // Arduino communication state
+  bool arduinoOnline;
+  unsigned long lastArduinoResponse;
+  unsigned long lastStatusRequest;
 
-  // NFC validation state
-  bool waitingForValidation;
-  String currentNFCCode;
-  unsigned long nfcScanTime;
-
-  // Servo instances
-  Servo servo1, servo2, servo3;
-
-  void initializeServos();
-  bool readNFCCard(String &nfcCode);
+  // Serial communication methods
+  void sendCommandToArduino(char command, uint8_t lockerIndex);
+  bool waitForArduinoResponse(char expectedResponse, unsigned long timeout = SERIAL_TIMEOUT);
+  void processArduinoMessage(char command, uint8_t lockerIndex, char response);
 
 public:
   HardwareManager(Preferences *prefs);
@@ -43,21 +34,15 @@ public:
   void loadLockerConfiguration();
   void saveLockerConfiguration(const String &moduleId, const String *lockerIds, int count);
 
-  // NFC operations
-  bool scanNFC(String &nfcCode);
-  void setNFCValidationResult(bool valid, const String &message);
-  bool isWaitingForNFCValidation() const { return waitingForValidation; }
-  void resetNFCValidation();
-
   // Locker operations
-  void unlockLocker(const String &lockerId);
-  void lockLocker(const String &lockerId);
-  void toggleLocker(const String &lockerId);
+  bool unlockLocker(const String &lockerId);
+  bool lockLocker(const String &lockerId);
+  void requestStatusUpdate();
 
-  // LCD operations
-  void updateLCD(const String &line1, const String &line2);
-  void updateLCD(const __FlashStringHelper *line1, const __FlashStringHelper *line2);
-  void updateSystemStatus();
+  // Arduino communication
+  void loop(); // Process serial communication
+  void setOnlineStatus(bool online);
+  bool isArduinoOnline() const { return arduinoOnline; }
 
   // Configuration button
   bool checkConfigButton();
@@ -67,10 +52,26 @@ public:
   LockerConfig *getLockers() const { return lockers; }
   bool getConfigurationStatus() const { return isConfigured; }
   String getModuleId() const;
-
-  // Hardware status getters
-  bool isNFCAvailable() const { return nfcAvailable; }
-  bool isLCDAvailable() const { return lcdAvailable; }
+  String getLockerStatus(const String &lockerId) const;
 };
+
+#endif
+void updateLCD(const __FlashStringHelper *line1, const __FlashStringHelper *line2);
+void updateSystemStatus();
+
+// Configuration button
+bool checkConfigButton();
+
+// Getters
+int getNumLockers() const { return numLockers; }
+LockerConfig *getLockers() const { return lockers; }
+bool getConfigurationStatus() const { return isConfigured; }
+String getModuleId() const;
+
+// Hardware status getters
+bool isNFCAvailable() const { return nfcAvailable; }
+bool isLCDAvailable() const { return lcdAvailable; }
+}
+;
 
 #endif
