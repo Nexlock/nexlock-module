@@ -22,9 +22,19 @@ bool HardwareManager::initialize()
   // Initialize I2C
   Wire.begin(PN532_SDA, PN532_SCL);
 
-  // Initialize LCD
-  lcd->init();
-  lcd->backlight();
+  // Initialize LCD - handle missing hardware gracefully
+  bool lcdInitialized = false;
+  try
+  {
+    lcd->init();
+    lcd->backlight();
+    lcdInitialized = true;
+    Serial.println("LCD initialized successfully");
+  }
+  catch (...)
+  {
+    Serial.println("Warning: LCD not found, continuing without display");
+  }
 
   // Initialize config button
   pinMode(CONFIG_BUTTON_PIN, INPUT_PULLUP);
@@ -39,44 +49,79 @@ bool HardwareManager::initialize()
 
   if (isConfigured)
   {
-    // Initialize PN532
+    // Initialize PN532 - handle missing hardware gracefully
+    bool nfcInitialized = false;
     nfc->begin();
 
     // Check if PN532 is connected
     uint32_t versiondata = nfc->getFirmwareVersion();
     if (!versiondata)
     {
-      Serial.println("PN532 not found - check I2C wiring");
-      updateLCD("NFC Error", "Check I2C wiring");
-      delay(2000);
+      Serial.println("Warning: PN532 not found, NFC functionality disabled");
+      nfcInitialized = false;
     }
     else
     {
       Serial.print("Found PN532 with firmware version: 0x");
       Serial.println(versiondata, HEX);
-
-      // Configure board to read RFID tags
       nfc->SAMConfig();
+      nfcInitialized = true;
     }
 
     initializeServos();
 
-    updateLCD("System Ready", "Configured");
+    if (lcdInitialized)
+    {
+      updateLCD("System Ready", "Hardware OK");
+    }
+    else
+    {
+      Serial.println("System Ready - LCD not available");
+    }
     return true;
   }
 
-  updateLCD("WiFi Connected", "Awaiting config");
+  if (lcdInitialized)
+  {
+    updateLCD("WiFi Connected", "Awaiting config");
+  }
+  else
+  {
+    Serial.println("WiFi Connected - Awaiting config");
+  }
   return false;
 }
 
 void HardwareManager::loadLockerConfiguration()
 {
   String moduleId = preferences->getString("moduleId", "");
-  isConfigured = (moduleId.length() > 0);
+  String ssid = preferences->getString("ssid", "");
+  String serverIP = preferences->getString("serverIP", "");
+
+  // Device is configured only if it has WiFi credentials AND module ID
+  isConfigured = (moduleId.length() > 0 && ssid.length() > 0 && serverIP.length() > 0);
+
+  Serial.print(F("Configuration check: moduleId="));
+  Serial.print(moduleId);
+  Serial.print(F(" (length: "));
+  Serial.print(moduleId.length());
+  Serial.print(F("), ssid="));
+  Serial.print(ssid);
+  Serial.print(F(", serverIP="));
+  Serial.print(serverIP);
+  Serial.print(F(", isConfigured="));
+  Serial.println(isConfigured);
 
   if (isConfigured)
   {
+    this->moduleId = moduleId;
     numLockers = preferences->getInt("numLockers", 0);
+
+    Serial.print(F("Module configured with ID: "));
+    Serial.println(moduleId);
+    Serial.print(F("Number of lockers: "));
+    Serial.println(numLockers);
+
     if (numLockers > 0 && numLockers <= MAX_LOCKERS)
     {
       lockers = new LockerConfig[numLockers];
@@ -105,13 +150,39 @@ void HardwareManager::loadLockerConfiguration()
 
         lockers[i].currentPosition = LOCK_POSITION;
         lockers[i].lastStatusUpdate = 0;
+
+        Serial.print(F("Configured locker: "));
+        Serial.println(lockers[i].lockerId);
       }
     }
+  }
+  else
+  {
+    Serial.println(F("Module not configured yet - missing one or more required values"));
   }
 }
 
 void HardwareManager::saveLockerConfiguration(const String &moduleId, const String *lockerIds, int count)
 {
+  Serial.print(F("Saving module configuration: moduleId="));
+  Serial.print(moduleId);
+  Serial.print(F(", numLockers="));
+  Serial.println(count);
+
+  // Verify we have valid data before saving
+  if (moduleId.length() == 0)
+  {
+    Serial.println(F("ERROR: Cannot save empty moduleId"));
+    return;
+  }
+
+  if (count <= 0 || count > MAX_LOCKERS)
+  {
+    Serial.print(F("ERROR: Invalid locker count: "));
+    Serial.println(count);
+    return;
+  }
+
   preferences->putString("moduleId", moduleId);
   preferences->putInt("numLockers", count);
 
@@ -119,6 +190,31 @@ void HardwareManager::saveLockerConfiguration(const String &moduleId, const Stri
   {
     String key = "locker" + String(i);
     preferences->putString(key.c_str(), lockerIds[i]);
+    Serial.print(F("Saved locker: "));
+    Serial.print(key);
+    Serial.print(F(" = "));
+    Serial.println(lockerIds[i]);
+  }
+
+  // Verify the save by reading back
+  String savedModuleId = preferences->getString("moduleId", "");
+  int savedNumLockers = preferences->getInt("numLockers", 0);
+
+  Serial.print(F("Verification - saved moduleId: "));
+  Serial.println(savedModuleId);
+  Serial.print(F("Verification - saved numLockers: "));
+  Serial.println(savedNumLockers);
+
+  if (savedModuleId == moduleId && savedNumLockers == count)
+  {
+    // Update local configuration status
+    this->moduleId = moduleId;
+    this->isConfigured = true;
+    Serial.println(F("Configuration saved and verified successfully"));
+  }
+  else
+  {
+    Serial.println(F("ERROR: Configuration verification failed"));
   }
 }
 
@@ -137,14 +233,29 @@ bool HardwareManager::scanNFC(String &nfcCode)
   if (!isConfigured)
     return false;
 
-  if (readNFCCard(nfcCode))
+  // Check if NFC hardware is available
+  static bool nfcAvailable = true;
+  if (!nfcAvailable)
   {
-    Serial.print(F("NFC: "));
-    Serial.println(nfcCode);
-    updateLCD(F("NFC Detected"), nfcCode.substring(0, 12));
-    delay(1500);
-    updateSystemStatus();
-    return true;
+    return false;
+  }
+
+  try
+  {
+    if (readNFCCard(nfcCode))
+    {
+      Serial.print(F("NFC: "));
+      Serial.println(nfcCode);
+      updateLCD(F("NFC Detected"), nfcCode.substring(0, 12));
+      delay(1500);
+      updateSystemStatus();
+      return true;
+    }
+  }
+  catch (...)
+  {
+    Serial.println("NFC communication failed, disabling NFC");
+    nfcAvailable = false;
   }
 
   return false;
@@ -266,20 +377,62 @@ void HardwareManager::toggleLocker(const String &lockerId)
 
 void HardwareManager::updateLCD(const String &line1, const String &line2)
 {
-  lcd->clear();
-  lcd->setCursor(0, 0);
-  lcd->print(line1.substring(0, LCD_COLS));
-  lcd->setCursor(0, 1);
-  lcd->print(line2.substring(0, LCD_COLS));
+  // Only update LCD if it was successfully initialized
+  static bool lcdAvailable = true;
+
+  if (!lcdAvailable)
+  {
+    Serial.println("LCD: " + line1 + " | " + line2);
+    return;
+  }
+
+  try
+  {
+    lcd->clear();
+    lcd->setCursor(0, 0);
+    lcd->print(line1.substring(0, LCD_COLS));
+    lcd->setCursor(0, 1);
+    lcd->print(line2.substring(0, LCD_COLS));
+  }
+  catch (...)
+  {
+    Serial.println("LCD communication failed, disabling LCD");
+    lcdAvailable = false;
+    Serial.println("LCD: " + line1 + " | " + line2);
+  }
 }
 
 void HardwareManager::updateLCD(const __FlashStringHelper *line1, const __FlashStringHelper *line2)
 {
-  lcd->clear();
-  lcd->setCursor(0, 0);
-  lcd->print(line1);
-  lcd->setCursor(0, 1);
-  lcd->print(line2);
+  // Only update LCD if it was successfully initialized
+  static bool lcdAvailable = true;
+
+  if (!lcdAvailable)
+  {
+    Serial.print("LCD: ");
+    Serial.print(line1);
+    Serial.print(" | ");
+    Serial.println(line2);
+    return;
+  }
+
+  try
+  {
+    lcd->clear();
+    lcd->setCursor(0, 0);
+    lcd->print(line1);
+    lcd->setCursor(0, 1);
+    lcd->print(line2);
+  }
+  catch (...)
+  {
+    Serial.println("LCD communication failed, disabling LCD");
+    lcdAvailable = false;
+    Serial.print("LCD: ");
+    Serial.print(line1);
+    Serial.print(" | ");
+    Serial.println(line2);
+  }
 }
 
 void HardwareManager::updateSystemStatus()
@@ -328,5 +481,5 @@ bool HardwareManager::checkConfigButton()
 
 String HardwareManager::getModuleId() const
 {
-  return preferences->getString("moduleId", "");
+  return moduleId;
 }

@@ -26,6 +26,11 @@ bool ServerManager::initialize(const String &serverIP, int serverPort)
   moduleId = hardware->getModuleId();
   isConfigured = hardware->getConfigurationStatus();
 
+  Serial.print(F("ServerManager initialize: moduleId="));
+  Serial.print(moduleId);
+  Serial.print(F(", isConfigured="));
+  Serial.println(isConfigured);
+
   // Construct WebSocket URL for raw WebSocket connection (not Socket.IO)
   serverURL = "ws://" + serverIP + ":" + String(serverPort) + "/ws";
 
@@ -43,9 +48,11 @@ bool ServerManager::initialize(const String &serverIP, int serverPort)
         Serial.println("WebSocket Connected to server");
         isConnected = true;
         if (isConfigured) {
+          Serial.println("Module is configured, registering...");
           registerModule();
           hardware->updateLCD("Connected", "System Ready");
         } else {
+          Serial.println("Module not configured, will broadcast availability");
           hardware->updateLCD("Connected", "Register device");
         }
         break;
@@ -109,14 +116,25 @@ void ServerManager::loop()
 
   unsigned long currentTime = millis();
 
+  // Check configuration status from hardware manager and sync
+  bool hardwareConfigured = hardware->getConfigurationStatus();
+  if (!isConfigured && hardwareConfigured)
+  {
+    Serial.println(F("Configuration status changed - now configured"));
+    isConfigured = true;
+    moduleId = hardware->getModuleId();
+    registerModule();
+    return; // Exit early to avoid broadcasting
+  }
+
   if (isConfigured && currentTime - lastPing >= PING_INTERVAL)
   {
     sendPing();
     lastPing = currentTime;
   }
 
-  // Send available module broadcast if not configured
-  if (!isConfigured && currentTime - lastAvailableBroadcast >= AVAILABLE_BROADCAST_INTERVAL)
+  // Send available module broadcast ONLY if not configured
+  if (!isConfigured && !hardwareConfigured && currentTime - lastAvailableBroadcast >= AVAILABLE_BROADCAST_INTERVAL)
   {
     sendAvailableModuleBroadcast();
     lastAvailableBroadcast = currentTime;
@@ -125,8 +143,12 @@ void ServerManager::loop()
 
 void ServerManager::sendAvailableModuleBroadcast()
 {
-  if (isConfigured || !isConnected)
+  // Triple-check: don't broadcast if already configured
+  if (isConfigured || !isConnected || hardware->getConfigurationStatus())
+  {
+    Serial.println(F("Skipping availability broadcast - module is configured"));
     return;
+  }
 
   StaticJsonDocument<MEDIUM_JSON_SIZE> doc;
   doc["type"] = "module_available";
@@ -259,22 +281,81 @@ void ServerManager::sendPing()
 void ServerManager::handleModuleConfiguration(const JsonDocument &doc)
 {
   String configModuleId = doc["moduleId"];
+  String configMacAddress = doc["macAddress"];
   JsonArrayConst lockerArray = doc["lockerIds"];
+
+  Serial.print(F("Received module configuration: moduleId="));
+  Serial.println(configModuleId);
+  Serial.print(F("Expected MAC address: "));
+  Serial.println(configMacAddress);
+  Serial.print(F("Our MAC address: "));
+  Serial.println(macAddress);
+
+  // First verify this configuration is meant for us by checking MAC address
+  if (configMacAddress != macAddress)
+  {
+    Serial.println(F("ERROR: MAC address mismatch - ignoring configuration"));
+    Serial.print(F("Expected: "));
+    Serial.println(configMacAddress);
+    Serial.print(F("Actual: "));
+    Serial.println(macAddress);
+
+    // Send error response
+    if (webSocket && isConnected)
+    {
+      StaticJsonDocument<MEDIUM_JSON_SIZE> errorDoc;
+      errorDoc["type"] = "configuration_error";
+      errorDoc["error"] = "MAC address mismatch";
+      errorDoc["expectedMac"] = configMacAddress;
+      errorDoc["actualMac"] = macAddress;
+
+      String errorMessage;
+      errorMessage.reserve(200);
+      serializeJson(errorDoc, errorMessage);
+      webSocket->send(errorMessage);
+    }
+    return;
+  }
+
+  Serial.println(F("MAC address verified - proceeding with configuration"));
 
   String *lockerIds = new String[lockerArray.size()];
   for (size_t i = 0; i < lockerArray.size(); i++)
   {
     lockerIds[i] = lockerArray[i].as<String>();
+    Serial.print(F("Locker ID: "));
+    Serial.println(lockerIds[i]);
   }
 
+  // Save configuration to persistent storage
   hardware->saveLockerConfiguration(configModuleId, lockerIds, lockerArray.size());
 
   delete[] lockerIds;
 
-  Serial.print(F("Module configured: "));
+  // Update local state immediately
+  isConfigured = true;
+  moduleId = configModuleId;
+
+  Serial.print(F("Module configured successfully: "));
   Serial.println(configModuleId);
+  Serial.println(F("Will restart in 3 seconds..."));
+
+  // Send success confirmation
+  if (webSocket && isConnected)
+  {
+    StaticJsonDocument<MEDIUM_JSON_SIZE> confirmDoc;
+    confirmDoc["type"] = "configuration_success";
+    confirmDoc["moduleId"] = configModuleId;
+    confirmDoc["macAddress"] = macAddress;
+
+    String confirmMessage;
+    confirmMessage.reserve(200);
+    serializeJson(confirmDoc, confirmMessage);
+    webSocket->send(confirmMessage);
+  }
+
   hardware->updateLCD(F("Configured!"), F("Restarting..."));
 
-  delay(2000);
+  delay(3000);
   ESP.restart();
 }

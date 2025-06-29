@@ -5,7 +5,7 @@
 #include <ESP32Servo.h>
 
 // Version information
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "1.1.4"
 #define DEVICE_NAME "NexLock"
 
 // Pin definitions for PN532 (I2C)

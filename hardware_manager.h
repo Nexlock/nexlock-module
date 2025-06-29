@@ -20,6 +20,10 @@ private:
   bool isConfigured;
   String moduleId;
 
+  // Hardware availability flags
+  bool nfcAvailable;
+  bool lcdAvailable;
+
   // NFC validation state
   bool waitingForValidation;
   String currentNFCCode;
@@ -63,6 +67,10 @@ public:
   LockerConfig *getLockers() const { return lockers; }
   bool getConfigurationStatus() const { return isConfigured; }
   String getModuleId() const;
+
+  // Hardware status getters
+  bool isNFCAvailable() const { return nfcAvailable; }
+  bool isLCDAvailable() const { return lcdAvailable; }
 };
 
 #endif
