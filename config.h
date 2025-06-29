@@ -4,12 +4,11 @@
 #include <Arduino.h>
 
 // Version information
-#define FIRMWARE_VERSION "1.2.0"
+#define FIRMWARE_VERSION "2.0.0"
 #define DEVICE_NAME "NexLock"
 
 // Serial communication with Arduino
-#define ARDUINO_RX_PIN 16
-#define ARDUINO_TX_PIN 17
+/
 #define ARDUINO_BAUD_RATE 115200
 
 // Other pin definitions

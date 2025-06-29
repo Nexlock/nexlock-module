@@ -50,19 +50,14 @@ bool ServerManager::initialize(const String &serverIP, int serverPort)
         if (isConfigured) {
           Serial.println("Module is configured, registering...");
           registerModule();
-          hardware->updateLCD("Connected", "System Ready");
         } else {
           Serial.println("Module not configured, will broadcast availability");
-          hardware->updateLCD("Connected", "Register device");
         }
         break;
         
       case WebsocketsEvent::ConnectionClosed:
         Serial.println("WebSocket Disconnected from server");
         isConnected = false;
-        if (isConfigured) {
-          hardware->updateLCD("Disconnected", "Reconnecting...");
-        }
         break;
         
       case WebsocketsEvent::GotPing:
@@ -133,13 +128,6 @@ void ServerManager::loop()
     lastPing = currentTime;
   }
 
-  // Send periodic status updates for all lockers
-  if (isConfigured && currentTime - lastStatusUpdate >= STATUS_CHECK_INTERVAL)
-  {
-    sendAllLockerStatusUpdates();
-    lastStatusUpdate = currentTime;
-  }
-
   // Send available module broadcast ONLY if not configured
   if (!isConfigured && !hardwareConfigured && currentTime - lastAvailableBroadcast >= AVAILABLE_BROADCAST_INTERVAL)
   {
@@ -194,7 +182,6 @@ void ServerManager::handleMessage(const String &message)
   else if (strcmp(messageType, "registered") == 0)
   {
     Serial.println(F("Module registered successfully"));
-    hardware->updateLCD(F("Registered"), F("System Ready"));
   }
   else if (strcmp(messageType, "pong") == 0)
   {
@@ -261,21 +248,6 @@ void ServerManager::handleLockUnlockCommand(const JsonDocument &doc)
     Serial.print(F("Failed to execute command for locker: "));
     Serial.println(lockerId);
     sendStatusUpdate(lockerId, "error");
-  }
-}
-
-void ServerManager::sendAllLockerStatusUpdates()
-{
-  if (!isConfigured || !isConnected)
-    return;
-
-  LockerConfig *lockers = hardware->getLockers();
-  int numLockers = hardware->getNumLockers();
-
-  for (int i = 0; i < numLockers; i++)
-  {
-    String status = hardware->getLockerStatus(lockers[i].lockerId);
-    sendStatusUpdate(lockers[i].lockerId, status);
   }
 }
 
@@ -389,8 +361,6 @@ void ServerManager::handleModuleConfiguration(const JsonDocument &doc)
     serializeJson(confirmDoc, confirmMessage);
     webSocket->send(confirmMessage);
   }
-
-  hardware->updateLCD(F("Configured!"), F("Restarting..."));
 
   delay(3000);
   ESP.restart();

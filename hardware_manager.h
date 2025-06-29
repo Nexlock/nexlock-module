@@ -56,22 +56,3 @@ public:
 };
 
 #endif
-void updateLCD(const __FlashStringHelper *line1, const __FlashStringHelper *line2);
-void updateSystemStatus();
-
-// Configuration button
-bool checkConfigButton();
-
-// Getters
-int getNumLockers() const { return numLockers; }
-LockerConfig *getLockers() const { return lockers; }
-bool getConfigurationStatus() const { return isConfigured; }
-String getModuleId() const;
-
-// Hardware status getters
-bool isNFCAvailable() const { return nfcAvailable; }
-bool isLCDAvailable() const { return lcdAvailable; }
-}
-;
-
-#endif
